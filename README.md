@@ -4,7 +4,6 @@
 
 > GEO (Generative Engine Optimization) is the emerging discipline of optimizing your brand's presence in AI-generated responses — the next frontier beyond traditional SEO.
 
-![Meridian Screenshot](screenshots/overview.png)
 
 ---
 
@@ -135,25 +134,6 @@ This is a portfolio demonstration. A production version would need:
 | No persistence | Database for tracking visibility over time |
 | Client-side API calls | Backend proxy with rate limiting and key management |
 | No authentication | User accounts, property management |
-
----
-
-## Screenshots
-
-### Setup
-![Setup](screenshots/setup.png)
-
-### Results Overview
-![Overview](screenshots/overview.png)
-
-### Guest Queries
-![Queries](screenshots/queries.png)
-
-### Action Plan
-![Actions](screenshots/actions.png)
-
-### Decision Log
-![Log](screenshots/decision-log.png)
 
 ---
 
