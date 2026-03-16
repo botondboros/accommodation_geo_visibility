@@ -4,8 +4,6 @@
 
 > GEO (Generative Engine Optimization) is the emerging discipline of optimizing your brand's presence in AI-generated responses — the next frontier beyond traditional SEO.
 
-![Screenshot](screenshots/overview.png)
-
 ---
 
 ## The Problem
