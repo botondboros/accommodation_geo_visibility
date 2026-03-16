@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Accommodation GEO Visibility Analyzer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #F8F7F4; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1A1A1A; }
+  input::placeholder { color: #C5C7CB; }
+  input:focus { outline: none; border-color: #1A6DD4 !important; box-shadow: 0 0 0 3px rgba(26,109,212,0.08); }
+  @keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:1} }
+  @keyframes fadeUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+  .bar-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .bar-label { width: 160px; font-size: 12px; text-align: right; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-track { flex: 1; height: 22px; background: rgba(0,0,0,0.03); border-radius: 5px; overflow: hidden; position: relative; }
+  .bar-fill { height: 100%; border-radius: 0 5px 5px 0; transition: width 0.6s ease; min-width: 2px; }
+  .bar-value { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 11px; font-weight: 600; color: #1A1A1A; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useCallback, useRef } = React;
+
+const COLORS = {
+  bg: "#F8F7F4", card: "#FFFFFF", cardBorder: "rgba(0,0,0,0.08)",
+  primary: "#1A6DD4", primaryMuted: "rgba(26,109,212,0.08)",
+  accent: "#C67D15", accentMuted: "rgba(198,125,21,0.08)",
+  green: "#1A8D5F", greenMuted: "rgba(26,141,95,0.08)",
+  red: "#C43D3D", redMuted: "rgba(196,61,61,0.08)",
+  text: "#1A1A1A", textMuted: "#6B7280", textDim: "#C5C7CB",
+};
+const fonts = "'Helvetica Neue', Helvetica, Arial, sans-serif";
+const serif = "Georgia, 'Times New Roman', serif";
+const INPUT_STYLE = {
+  width: "100%", padding: "11px 14px", borderRadius: 8,
+  border: "1px solid rgba(0,0,0,0.1)", background: "#FAFAF8",
+  color: COLORS.text, fontSize: 14, fontFamily: fonts, boxSizing: "border-box",
+};
+const LABEL_STYLE = {
+  fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase",
+  color: COLORS.textMuted, fontWeight: 600, display: "block", marginBottom: 8,
+};
+const MODELS = {
+  claude:  { name: "Claude",   color: "#D97706", icon: "\uD83D\uDFE0", placeholder: "sk-ant-api03-..." },
+  chatgpt: { name: "ChatGPT",  color: "#10A37F", icon: "\uD83D\uDFE2", placeholder: "sk-proj-..." },
+  gemini:  { name: "Gemini",   color: "#4285F4", icon: "\uD83D\uDD35", placeholder: "AIzaSy..." },
+};
+
+// ── Smart Name Matching ────────────────────────────────────────────────
+function stripAccents(str) { return str.normalize("NFD").replace(/[̀-ͯ]/g, ""); }
+const STOP_WORDS = new Set(["hotel","hotels","the","a","an","resort","resorts","spa","inn","and","of","in","at","by","lodge","hostel","pension","motel","guesthouse","suites","suite","apartments","apartment","residence","boutique","luxury"]);
+function getBrandWords(name, city) {
+  const cityWords = new Set((city||"").toLowerCase().split(/\s+/).map(w => stripAccents(w)));
+  return stripAccents(name.toLowerCase()).split(/\s+/).filter(w => w.length > 2 && !STOP_WORDS.has(w) && !cityWords.has(w));
+}
+function countMentions(text, name, city) {
+  const exactRe = new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+  const em = text.match(exactRe); if (em) return em.length;
+  const sT = stripAccents(text.toLowerCase()), sN = stripAccents(name.toLowerCase());
+  const am = sT.match(new RegExp(sN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'));
+  if (am) return am.length;
+  const bw = getBrandWords(name, city); if (!bw.length) return 0;
+  if (bw.every(w => sT.includes(w))) { const p = bw[0]; const r = sT.match(new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')); return r ? r.length : 1; }
+  const sw = bw.find(w => w.length >= 5);
+  if (sw) { const r = sT.match(new RegExp(sw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')); if (r) return r.length; }
+  return 0;
+}
+function findPosition(text, name, city) {
+  const l = text.toLowerCase(); let i = l.indexOf(name.toLowerCase()); if (i !== -1) return i;
+  const sT = stripAccents(l); i = sT.indexOf(stripAccents(name.toLowerCase())); if (i !== -1) return i;
+  const bw = getBrandWords(name, city); let e = Infinity;
+  for (const w of bw) { const p = sT.indexOf(w); if (p !== -1 && p < e) e = p; }
+  return e === Infinity ? -1 : e;
+}
+
+// ── Rules Engine ───────────────────────────────────────────────────────
+function runRulesEngine(responses, config, modelId) {
+  const hotel = config.hotelName.toLowerCase();
+  const competitors = config.competitors.map(c => c.toLowerCase()).filter(Boolean);
+  const allNames = [hotel, ...competitors];
+  const findings = [], totalMentions = {}, firstMentions = {}, queryResults = [];
+  const mLabel = MODELS[modelId]?.name || modelId;
+  allNames.forEach(n => { totalMentions[n] = 0; firstMentions[n] = 0; });
+  responses.forEach(({ query, response }) => {
+    const mentions = {}; let earliest = { name: null, pos: Infinity };
+    allNames.forEach(n => {
+      const count = countMentions(response, n, config.city); mentions[n] = count; totalMentions[n] += count;
+      const idx = findPosition(response, n, config.city); if (idx !== -1 && idx < earliest.pos) earliest = { name: n, pos: idx };
+    });
+    if (earliest.name) firstMentions[earliest.name]++;
+    const reco = /recommend|suggest|consider|great choice|excellent|top pick|standout|one of the best|highly rated|don't miss/i;
+    const hotelMentioned = countMentions(response, hotel, config.city) > 0;
+    queryResults.push({ query, mentions, firstMention: earliest.name, hotelRecommended: hotelMentioned && reco.test(response), response, model: modelId });
+  });
+  const totalH = totalMentions[hotel] || 0, totalAll = Object.values(totalMentions).reduce((s,v) => s+v, 0);
+  const shareOfVoice = totalAll > 0 ? Math.round((totalH / totalAll) * 100) : 0;
+  const qWith = queryResults.filter(q => q.mentions[hotel] > 0).length;
+  findings.push({ source: "rule", cost: 0, confidence: 1.0, model: modelId,
+    type: totalH > 0 ? "positive" : "negative",
+    title: totalH > 0 ? "Mentioned in " + qWith + "/" + responses.length + " queries" : "Not mentioned in any query",
+    detail: totalH > 0 ? "On " + mLabel + ', "' + config.hotelName + '" appeared ' + totalH + " time(s) with " + shareOfVoice + "% share of voice." : "On " + mLabel + ', "' + config.hotelName + '" was absent. Travelers using ' + mLabel + " won't discover your property.",
+  });
+  const fc = firstMentions[hotel] || 0;
+  if (totalH > 0) { findings.push({ source: "rule", cost: 0, confidence: 1.0, model: modelId, type: fc > 0 ? "positive" : "warning", title: fc > 0 ? "Listed first in " + fc + " response(s)" : "Never listed first", detail: fc > 0 ? "On " + mLabel + ", your property was first-mentioned in " + fc + " of " + responses.length + " responses." : "On " + mLabel + ", competitors appear ahead of you." }); }
+  competitors.forEach(comp => {
+    const cd = config.competitors.find(c => c.toLowerCase() === comp) || comp;
+    if ((totalMentions[comp]||0) > totalH) findings.push({ source: "rule", cost: 0, confidence: 1.0, model: modelId, type: "warning", title: cd + " outranks you", detail: "On " + mLabel + ', "' + cd + '" had ' + totalMentions[comp] + " mentions vs your " + totalH + "." });
+  });
+  const rc = queryResults.filter(q => q.hotelRecommended).length;
+  if (totalH > 0) { findings.push({ source: "rule", cost: 0, confidence: 0.9, model: modelId, type: rc > 0 ? "positive" : "warning", title: rc > 0 ? "Recommended in " + rc + " response(s)" : "Mentioned but not recommended", detail: rc > 0 ? mLabel + " actively recommended your property with positive language." : mLabel + " mentioned you but didn't endorse you." }); }
+  const sovData = [
+    { name: config.hotelName, mentions: totalMentions[hotel]||0, fill: MODELS[modelId]?.color || COLORS.primary },
+    ...competitors.map((c, i) => ({ name: config.competitors.find(cn => cn.toLowerCase() === c) || c, mentions: totalMentions[c]||0, fill: ["#7C3AED","#C67D15","#C43D3D"][i]||"#6B7280" }))
+  ].sort((a, b) => b.mentions - a.mentions);
+  return { findings, totalMentions, firstMentions, shareOfVoice, queryResults, sovData };
+}
+
+// ── Multi-Model API ────────────────────────────────────────────────────
+async function callLLM(modelId, key, systemPrompt, userPrompt) {
+  const start = Date.now(); let text = "";
+  if (modelId === "claude") {
+    const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+      body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 2000, system: systemPrompt, messages: [{ role: "user", content: userPrompt }] }) });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error("Claude: " + (e.error?.message || "Error " + res.status)); }
+    const d = await res.json(); text = d.content?.map(b => b.text||"").join("")||"";
+  } else if (modelId === "chatgpt") {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", { method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
+      body: JSON.stringify({ model: "gpt-4o-mini", max_tokens: 2000, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }] }) });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error("ChatGPT: " + (e.error?.message || "Error " + res.status)); }
+    const d = await res.json(); text = d.choices?.[0]?.message?.content||"";
+  } else if (modelId === "gemini") {
+    const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + key, { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ systemInstruction: { parts: [{ text: systemPrompt }] }, contents: [{ parts: [{ text: userPrompt }] }], generationConfig: { maxOutputTokens: 4000, responseMimeType: "application/json" } }) });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error("Gemini: " + (e.error?.message || "Error " + res.status)); }
+    const d = await res.json();
+    // Filter out "thought" parts from thinking models
+    const parts = d.candidates?.[0]?.content?.parts || [];
+    text = parts.filter(p => !p.thought).map(p => p.text||"").join("")||"";
+    if (!text) text = parts.map(p => p.text||"").join("")||"";
+  }
+  return { text, latency: Date.now() - start };
+}
+
+function parseJSONRobust(text, type) {
+  let c = text.replace(/```json|```/g, "").trim();
+  const o = type === "array" ? "[" : "{", cl = type === "array" ? "]" : "}";
+  const s = c.indexOf(o), e = c.lastIndexOf(cl);
+  if (s !== -1 && e !== -1) c = c.slice(s, e + 1);
+  c = c.replace(/,\s*([}\]])/g, "$1").replace(/[\r\n]+/g, " ");
+  try { return JSON.parse(c); } catch {}
+  c = c.replace(/[“”„‟″‶]/g, '\\"').replace(/[‘’‚‛′‵]/g, "'");
+  try { return JSON.parse(c); } catch {}
+  console.warn("JSON parse failed:", text.slice(0, 200));
+  return null;
+}
+
+const DISC_SYS = "You are a helpful travel assistant. Answer each accommodation query naturally and specifically. Mention real property names — do not make up fictional ones. Give honest, balanced recommendations in 2-4 sentences per query.\n\nIMPORTANT: Return ONLY a raw JSON array. No explanation, no markdown, no backticks. Format: [{\"query\":\"the question\",\"response\":\"your answer\"}]";
+
+function buildQueries(config) {
+  return [
+    "Where should I stay in " + config.city + "? I'm looking for a " + config.hotelType + " place.",
+    "What are the best places to stay in " + config.city + " for " + config.guestType + "?",
+    "I'm choosing between " + config.hotelName + " and " + (config.competitors[0]||"other places") + " in " + config.city + ". Which is better?",
+    "Recommend a " + config.hotelType + " accommodation near " + (config.neighborhood||config.city) + " with good reviews.",
+    "What accommodation should I book in " + config.city + " if I want " + (config.sellingPoint||"a great experience") + "?",
+  ];
+}
+
+async function runDiscoveryForModel(modelId, key, config) {
+  const queries = buildQueries(config);
+  const { text, latency } = await callLLM(modelId, key, DISC_SYS, queries.map((q, i) => (i+1) + ". " + q).join("\n"));
+  const parsed = parseJSONRobust(text, "array");
+  if (!parsed || !Array.isArray(parsed)) {
+    console.error(MODELS[modelId].name + " raw response:", text.slice(0, 500));
+    throw new Error(MODELS[modelId].name + " returned unexpected format. Please try again.");
+  }
+  return { responses: parsed, latency };
+}
+
+async function runCrossModelAnalysis(allModelResults, config, analysisKey, analysisModel) {
+  const sys = "You are a hospitality GEO analyst. Analyze how an accommodation appears across AI assistants. Respond with ONLY a JSON object. No markdown, no backticks, no text before or after.";
+  const sums = allModelResults.map(m => MODELS[m.model].name + ": SoV " + m.rules.shareOfVoice + "%, " + (m.rules.totalMentions[config.hotelName.toLowerCase()]||0) + " mentions").join(" | ");
+  const allResp = {}; allModelResults.forEach(m => { allResp[m.model] = m.discovery; });
+  const user = [
+    'Analyze AI visibility for "' + config.hotelName + '" in ' + config.city + " across " + allModelResults.length + " AI assistant(s).",
+    "Type: " + config.hotelType + " | Guests: " + config.guestType + " | USP: " + config.sellingPoint,
+    "Competitors: " + config.competitors.filter(Boolean).join(", "),
+    "Results: " + sums,
+    "Responses: " + JSON.stringify(allResp),
+    "",
+    'Return this exact JSON:',
+    '{"sentiment":"positive or neutral or negative","sentimentDetail":"2-3 sentence analysis","positioning":"one sentence summary","modelComparison":[{"model":"name","verdict":"one sentence"}],"competitorInsights":[{"name":"competitor","edge":"one sentence"}],"contentGaps":["gap1","gap2"],"recommendations":[{"priority":"high or medium or low","action":"do this","reasoning":"why","category":"content or technical or strategic"}]}'
+  ].join("\n");
+  const { text, latency } = await callLLM(analysisModel, analysisKey, sys, user);
+  let parsed = parseJSONRobust(text, "object");
+  if (!parsed) { parsed = { sentiment: "neutral", sentimentDetail: "Partial analysis. Re-run for full results.", positioning: "", modelComparison: [], competitorInsights: [], contentGaps: ["Re-run recommended."], recommendations: [] }; }
+  return { analysis: parsed, latency };
+}
+
+// ── UI Components ──────────────────────────────────────────────────────
+function Badge({ type, children }) {
+  const colors = {
+    rule: { bg: "rgba(26,109,212,0.06)", border: "rgba(26,109,212,0.2)", text: "#1A6DD4" },
+    ai: { bg: "rgba(109,40,217,0.06)", border: "rgba(109,40,217,0.2)", text: "#6D28D9" },
+    positive: { bg: COLORS.greenMuted, border: "rgba(26,141,95,0.25)", text: COLORS.green },
+    negative: { bg: COLORS.redMuted, border: "rgba(196,61,61,0.25)", text: COLORS.red },
+    warning: { bg: COLORS.accentMuted, border: "rgba(198,125,21,0.25)", text: COLORS.accent },
+    high: { bg: COLORS.redMuted, border: "rgba(196,61,61,0.25)", text: COLORS.red },
+    medium: { bg: COLORS.accentMuted, border: "rgba(198,125,21,0.25)", text: COLORS.accent },
+    low: { bg: "rgba(26,109,212,0.06)", border: "rgba(26,109,212,0.2)", text: "#1A6DD4" },
+    content: { bg: COLORS.greenMuted, border: "rgba(26,141,95,0.2)", text: COLORS.green },
+    technical: { bg: "rgba(26,109,212,0.06)", border: "rgba(26,109,212,0.2)", text: "#1A6DD4" },
+    strategic: { bg: COLORS.accentMuted, border: "rgba(198,125,21,0.2)", text: COLORS.accent },
+    claude: { bg: "rgba(217,119,6,0.08)", border: "rgba(217,119,6,0.25)", text: "#D97706" },
+    chatgpt: { bg: "rgba(16,163,127,0.08)", border: "rgba(16,163,127,0.25)", text: "#10A37F" },
+    gemini: { bg: "rgba(66,133,244,0.08)", border: "rgba(66,133,244,0.25)", text: "#4285F4" },
+  };
+  const c = colors[type] || colors.rule;
+  return <span style={{ display: "inline-block", padding: "2px 10px", borderRadius: 100, fontSize: 10, fontWeight: 600, letterSpacing: 0.8, textTransform: "uppercase", background: c.bg, border: "1px solid " + c.border, color: c.text, fontFamily: fonts }}>{children}</span>;
+}
+function Card({ children, style }) {
+  return <div style={{ background: COLORS.card, border: "1px solid " + COLORS.cardBorder, borderRadius: 12, padding: "20px 22px", boxShadow: "0 1px 3px rgba(0,0,0,0.04)", ...style }}>{children}</div>;
+}
+function ScoreCircle({ value, size = 88, label, color }) {
+  const r = (size - 10) / 2, circ = 2 * Math.PI * r, offset = circ - (value / 100) * circ;
+  const c = color || (value >= 60 ? COLORS.green : value >= 35 ? COLORS.accent : COLORS.red);
+  return (<div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+    <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="rgba(0,0,0,0.06)" strokeWidth={4} />
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={c} strokeWidth={4} strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" style={{ transition: "stroke-dashoffset 1s ease" }} />
+      <text x={size/2} y={size/2} textAnchor="middle" dominantBaseline="central" fill={COLORS.text} fontSize={size*0.26} fontWeight="700" fontFamily={fonts} style={{ transform: "rotate(90deg)", transformOrigin: "center" }}>{value}</text>
+    </svg>
+    {label && <span style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 500 }}>{label}</span>}
+  </div>);
+}
+function ProgressStep({ step, current, label, sublabel }) {
+  const done = current > step, active = current === step;
+  return (<div style={{ display: "flex", alignItems: "center", gap: 14, opacity: done || active ? 1 : 0.35 }}>
+    <div style={{ width: 34, height: 34, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid " + (done ? COLORS.green : active ? COLORS.primary : COLORS.textDim), background: done ? COLORS.greenMuted : active ? COLORS.primaryMuted : "transparent", color: done ? COLORS.green : active ? COLORS.primary : COLORS.textDim, fontSize: 13, fontWeight: 700, fontFamily: fonts, transition: "all 0.4s ease" }}>{done ? "✓" : step}</div>
+    <div><div style={{ fontSize: 13, fontWeight: 600, color: active ? COLORS.text : done ? COLORS.green : COLORS.textDim }}>{label}</div>
+    <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 1 }}>{sublabel}</div></div>
+  </div>);
+}
+function HorizontalBarChart({ data }) {
+  const max = Math.max(...data.map(d => d.mentions), 1);
+  return (<div style={{ padding: "4px 0" }}>{data.map((d, i) => (
+    <div key={i} className="bar-row"><div className="bar-label" style={{ fontFamily: fonts }}>{d.name}</div>
+    <div className="bar-track"><div className="bar-fill" style={{ width: (d.mentions/max*100)+"%", background: d.fill }} />
+    <div className="bar-value">{d.mentions}</div></div></div>
+  ))}</div>);
+}
+
+// ── Main App ───────────────────────────────────────────────────────────
+function App() {
+  const [phase, setPhase] = useState("setup");
+  const [config, setConfig] = useState({
+    hotelName: "", city: "", neighborhood: "",
+    hotelType: "luxury", guestType: "couples and culture travelers",
+    sellingPoint: "",
+    competitors: ["", "", ""],
+  });
+  const [keys, setKeys] = useState({ claude: "", chatgpt: "", gemini: "" });
+  const [progress, setProgress] = useState({ step: 0, label: "" });
+  const [error, setError] = useState(null);
+  const [results, setResults] = useState(null);
+  const [activeTab, setActiveTab] = useState("overview");
+  const [viewModel, setViewModel] = useState("all");
+
+  const updateConfig = useCallback((key, value) => setConfig(prev => ({ ...prev, [key]: value })), []);
+  const updateCompetitor = useCallback((idx, value) => {
+    setConfig(prev => { const c = [...prev.competitors]; c[idx] = value; return { ...prev, competitors: c }; });
+  }, []);
+  const updateKey = useCallback((model, value) => setKeys(prev => ({ ...prev, [model]: value.trim() })), []);
+  const activeModels = Object.entries(keys).filter(([_, v]) => v).map(([k]) => k);
+  const hasAnyKey = activeModels.length > 0;
+
+  const analyze = useCallback(async () => {
+    setPhase("analyzing"); setProgress({ step: 0, label: "Starting..." }); setError(null);
+    try {
+      const modelResults = [];
+      for (let i = 0; i < activeModels.length; i++) {
+        const mid = activeModels[i];
+        setProgress({ step: i + 1, label: "Querying " + MODELS[mid].name + "..." });
+        const disc = await runDiscoveryForModel(mid, keys[mid], config);
+        const rules = runRulesEngine(disc.responses, config, mid);
+        modelResults.push({ model: mid, discovery: disc.responses, rules, latency: disc.latency });
+      }
+      setProgress({ step: activeModels.length + 1, label: "Cross-model AI analysis..." });
+      const am = activeModels.includes("claude") ? "claude" : activeModels.includes("chatgpt") ? "chatgpt" : "gemini";
+      const ai = await runCrossModelAnalysis(modelResults, config, keys[am], am);
+
+      // Assemble findings
+      const allRF = modelResults.flatMap(m => m.rules.findings);
+      const aiF = [];
+      if (ai.analysis.sentiment) {
+        aiF.push({ source: "ai", confidence: 0.85, cost: 0.003,
+          type: ai.analysis.sentiment === "positive" ? "positive" : ai.analysis.sentiment === "negative" ? "negative" : "warning",
+          title: "AI sentiment: " + (ai.analysis.sentiment === "negative" ? "room for improvement" : ai.analysis.sentiment),
+          detail: ai.analysis.sentimentDetail || "" });
+      }
+      (ai.analysis.modelComparison || []).forEach(mc => {
+        const mid = Object.keys(MODELS).find(k => MODELS[k].name.toLowerCase() === mc.model?.toLowerCase()) || "";
+        aiF.push({ source: "ai", confidence: 0.82, cost: 0, model: mid, type: "positive", title: mc.model + " verdict", detail: mc.verdict });
+      });
+      (ai.analysis.contentGaps || []).forEach(gap => { aiF.push({ source: "ai", confidence: 0.78, cost: 0, type: "warning", title: "Content gap detected", detail: gap }); });
+      const allFindings = [...allRF, ...aiF];
+
+      // Scores
+      const hotel = config.hotelName.toLowerCase();
+      const modelScores = {};
+      modelResults.forEach(m => {
+        const ms = Math.min(m.rules.shareOfVoice * 1.5, 40);
+        const ss = ai.analysis.sentiment === "positive" ? 35 : ai.analysis.sentiment === "neutral" ? 20 : 5;
+        const fm = ((m.rules.firstMentions[hotel]||0) / m.discovery.length) * 25;
+        modelScores[m.model] = Math.min(100, Math.round(ms + ss + fm));
+      });
+      const overallScore = Math.round(Object.values(modelScores).reduce((a,b)=>a+b,0) / Object.values(modelScores).length);
+
+      // Aggregated mentions
+      const comps = config.competitors.map(c => c.toLowerCase()).filter(Boolean);
+      const agg = {}; [hotel, ...comps].forEach(n => { agg[n] = 0; });
+      modelResults.forEach(m => { Object.entries(m.rules.totalMentions).forEach(([n,c]) => { agg[n] = (agg[n]||0) + c; }); });
+      const aggSovData = [
+        { name: config.hotelName, mentions: agg[hotel]||0, fill: COLORS.primary },
+        ...comps.map((c,i) => ({ name: config.competitors.find(cn => cn.toLowerCase() === c) || c, mentions: agg[c]||0, fill: ["#7C3AED","#C67D15","#C43D3D"][i]||"#6B7280" }))
+      ].sort((a,b) => b.mentions - a.mentions);
+
+      setResults({ modelResults, ai: ai.analysis, allFindings, overallScore, modelScores, aggSovData, timings: Object.fromEntries(modelResults.map(m => [m.model, m.latency])), aiLatency: ai.latency, analysisModel: am });
+      setPhase("results"); setActiveTab("overview"); setViewModel("all");
+    } catch (err) { console.error(err); setError(err.message || "Analysis failed."); setPhase("setup"); }
+  }, [config, keys, activeModels]);
+
+  const filteredQueries = results ? (viewModel === "all" ? results.modelResults.flatMap(m => m.rules.queryResults) : (results.modelResults.find(m => m.model === viewModel)?.rules.queryResults || [])) : [];
+
+  return (
+    <div style={{ minHeight: "100vh", background: COLORS.bg, color: COLORS.text, fontFamily: fonts }}>
+      <div style={{ maxWidth: 960, margin: "0 auto", padding: "40px 24px 60px" }}>
+
+        <div style={{ marginBottom: phase === "setup" ? 32 : 28 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <div style={{ width: 7, height: 7, borderRadius: "50%", background: COLORS.primary }} />
+            <span style={{ fontSize: 11, letterSpacing: 2.5, textTransform: "uppercase", color: COLORS.textMuted, fontWeight: 600 }}>GEO Analyzer</span>
+          </div>
+          <h1 style={{ fontFamily: serif, fontSize: "clamp(26px, 4vw, 40px)", fontWeight: 700, margin: 0, lineHeight: 1.15 }}>
+            Accommodation GEO Visibility<span style={{ color: COLORS.primary }}> Analyzer</span>
+          </h1>
+          {phase === "setup" && <p style={{ fontSize: 14, color: COLORS.textMuted, marginTop: 10, maxWidth: 580, lineHeight: 1.7 }}>
+            See how AI assistants recommend (or ignore) your property. We query Claude, ChatGPT, and Gemini the way real travelers do, then compare how each model treats your brand.
+          </p>}
+        </div>
+
+        {/* ── SETUP ── */}
+        {phase === "setup" && (
+          <div style={{ animation: "fadeUp 0.4s ease" }}>
+            {error && <Card style={{ background: COLORS.redMuted, borderColor: "rgba(196,61,61,0.2)", marginBottom: 18, padding: "14px 18px" }}><span style={{ fontSize: 13, color: COLORS.red }}>{error}</span></Card>}
+
+            <Card style={{ marginBottom: 18 }}>
+              <div style={LABEL_STYLE}>API Keys — add one or more</div>
+              <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 14, lineHeight: 1.6 }}>Keys stay in your browser only — never stored or logged. More models = richer cross-model comparison.</div>
+              <div style={{ display: "grid", gap: 10 }}>
+                {Object.entries(MODELS).map(([id, m]) => (
+                  <div key={id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontSize: 16, width: 24, textAlign: "center" }}>{m.icon}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, width: 70, color: m.color }}>{m.name}</span>
+                    <input type="password" value={keys[id]} onChange={e => updateKey(id, e.target.value)} placeholder={m.placeholder}
+                      style={{ ...INPUT_STYLE, flex: 1, padding: "8px 12px", fontSize: 13 }} />
+                    {keys[id] && <span style={{ fontSize: 12, color: COLORS.green, fontWeight: 600 }}>{"✓"}</span>}
+                  </div>
+                ))}
+              </div>
+            </Card>
+
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14, marginBottom: 14 }}>
+              <Card><label style={LABEL_STYLE}>Your Property Name</label><input value={config.hotelName} onChange={e => updateConfig("hotelName", e.target.value)} placeholder="e.g. Hotel Sacher" style={{ ...INPUT_STYLE, fontSize: 16, fontWeight: 500 }} /></Card>
+              <Card><label style={LABEL_STYLE}>City</label><input value={config.city} onChange={e => updateConfig("city", e.target.value)} placeholder="e.g. Vienna" style={{ ...INPUT_STYLE, fontSize: 16, fontWeight: 500 }} /></Card>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 14 }}>
+              <Card><label style={LABEL_STYLE}>Neighborhood</label><input value={config.neighborhood} onChange={e => updateConfig("neighborhood", e.target.value)} placeholder="e.g. Old Town" style={INPUT_STYLE} /></Card>
+              <Card><label style={LABEL_STYLE}>Property Type</label><input value={config.hotelType} onChange={e => updateConfig("hotelType", e.target.value)} placeholder="boutique hotel, hostel, B&B" style={INPUT_STYLE} /></Card>
+              <Card><label style={LABEL_STYLE}>Target Guests</label><input value={config.guestType} onChange={e => updateConfig("guestType", e.target.value)} placeholder="e.g. business travelers" style={INPUT_STYLE} /></Card>
+            </div>
+            <Card style={{ marginBottom: 14 }}><label style={LABEL_STYLE}>Key Selling Point</label><input value={config.sellingPoint} onChange={e => updateConfig("sellingPoint", e.target.value)} placeholder="What makes your property special?" style={INPUT_STYLE} /></Card>
+            <Card style={{ marginBottom: 24 }}><label style={LABEL_STYLE}>Local Competitors</label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                {config.competitors.map((c, i) => <input key={i} value={c} onChange={e => updateCompetitor(i, e.target.value)} placeholder={"Competitor " + (i+1)} style={INPUT_STYLE} />)}
+              </div>
+            </Card>
+
+            <button onClick={analyze} disabled={!config.hotelName || !config.city || !hasAnyKey} style={{
+              width: "100%", padding: "15px", borderRadius: 10, border: "none",
+              background: config.hotelName && config.city && hasAnyKey ? "linear-gradient(135deg, " + COLORS.primary + ", #1558A8)" : COLORS.textDim,
+              color: "#fff", fontSize: 15, fontWeight: 600, fontFamily: fonts,
+              cursor: config.hotelName && config.city && hasAnyKey ? "pointer" : "not-allowed", letterSpacing: 0.3,
+            }}>{hasAnyKey ? "Analyze across " + activeModels.length + " model" + (activeModels.length > 1 ? "s" : "") + " →" : "Add at least one API key above →"}</button>
+            <div style={{ display: "flex", gap: 20, justifyContent: "center", marginTop: 18, fontSize: 11, color: COLORS.textDim, flexWrap: "wrap" }}>
+              {activeModels.map(m => <span key={m}>{MODELS[m].icon} {MODELS[m].name}</span>)}
+              {activeModels.length > 0 && <React.Fragment><span>{"·"}</span><span>{activeModels.length * 2 + 1} API calls</span><span>{"·"}</span><span>~{activeModels.length * 12 + 10}s</span></React.Fragment>}
+            </div>
+          </div>
+        )}
+
+        {/* ── ANALYZING ── */}
+        {phase === "analyzing" && (
+          <Card style={{ animation: "fadeUp 0.4s ease", textAlign: "center", padding: "48px 32px" }}>
+            <div style={{ marginBottom: 32, fontSize: 14, color: COLORS.textMuted }}>Analyzing <span style={{ color: COLORS.primary, fontWeight: 600 }}>{config.hotelName}</span> in {config.city}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 22, maxWidth: 400, margin: "0 auto", textAlign: "left" }}>
+              {activeModels.map((mid, i) => <ProgressStep key={mid} step={i+1} current={progress.step} label={MODELS[mid].icon + " " + MODELS[mid].name + " Discovery"} sublabel={"Simulating traveler queries on " + MODELS[mid].name} />)}
+              <ProgressStep step={activeModels.length + 1} current={progress.step} label={"\uD83E\uDDE0 Cross-Model Analysis"} sublabel="Comparing visibility across all models" />
+            </div>
+            <div style={{ marginTop: 28, animation: "pulse 1.5s ease infinite", fontSize: 13, color: COLORS.textMuted }}>{progress.label}</div>
+          </Card>
+        )}
+
+        {/* ── RESULTS ── */}
+        {phase === "results" && results && (
+          <div style={{ animation: "fadeUp 0.5s ease" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22, flexWrap: "wrap", gap: 14 }}>
+              <div>
+                <span style={{ fontFamily: serif, fontSize: 20, fontWeight: 700 }}>{config.hotelName}</span>
+                <span style={{ fontSize: 13, color: COLORS.textMuted }}> {"·"} {config.city}</span>
+                <div style={{ display: "flex", gap: 6, marginTop: 6 }}>{results.modelResults.map(m => <Badge key={m.model} type={m.model}>{MODELS[m.model].name}</Badge>)}</div>
+              </div>
+              <button onClick={() => { setPhase("setup"); setResults(null); }} style={{ padding: "8px 18px", borderRadius: 8, border: "1px solid " + COLORS.cardBorder, background: "#fff", color: COLORS.textMuted, fontSize: 12, fontFamily: fonts, cursor: "pointer", fontWeight: 500 }}>{"←"} New Analysis</button>
+            </div>
+
+            {/* Score Cards */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(" + (results.modelResults.length + 2) + ", 1fr)", gap: 12, marginBottom: 22 }}>
+              {results.modelResults.map(m => (
+                <Card key={m.model} style={{ display: "flex", alignItems: "center", gap: 12, borderTop: "3px solid " + MODELS[m.model].color }}>
+                  <ScoreCircle value={results.modelScores[m.model]} size={56} color={MODELS[m.model].color} />
+                  <div><div style={{ fontSize: 11, color: COLORS.textMuted }}>{MODELS[m.model].icon} {MODELS[m.model].name}</div><div style={{ fontSize: 13, fontWeight: 600 }}>SoV {m.rules.shareOfVoice}%</div></div>
+                </Card>
+              ))}
+              <Card style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <ScoreCircle value={results.overallScore} size={56} />
+                <div><div style={{ fontSize: 11, color: COLORS.textMuted }}>Overall</div><div style={{ fontSize: 13, fontWeight: 600 }}>{results.overallScore >= 60 ? "Strong" : results.overallScore >= 35 ? "Moderate" : "Weak"}</div></div>
+              </Card>
+              <Card>
+                <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 4 }}>AI Sentiment</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 18 }}>{results.ai.sentiment === "positive" ? "\uD83D\uDC4D" : results.ai.sentiment === "negative" ? "\uD83D\uDD0D" : "➡️"}</span>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: results.ai.sentiment === "positive" ? COLORS.green : COLORS.accent }}>{results.ai.sentiment === "negative" ? "Room for improvement" : results.ai.sentiment}</div>
+                </div>
+                <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 4, lineHeight: 1.5 }}>{results.ai.sentimentDetail}</div>
+              </Card>
+            </div>
+
+            {/* Tabs */}
+            <div style={{ display: "flex", gap: 2, marginBottom: 18, borderBottom: "1px solid " + COLORS.cardBorder }}>
+              {[{ id: "overview", label: "Overview" }, { id: "queries", label: "Model Queries" }, { id: "actions", label: "Action Plan" }, { id: "log", label: "Decision Log" }].map(t => (
+                <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "10px 16px", border: "none", borderBottom: activeTab === t.id ? "2px solid " + COLORS.primary : "2px solid transparent", background: "transparent", marginBottom: -1, color: activeTab === t.id ? COLORS.primary : COLORS.textMuted, cursor: "pointer", fontSize: 13, fontWeight: activeTab === t.id ? 600 : 400, fontFamily: fonts }}>{t.label}</button>
+              ))}
+            </div>
+
+            {/* Overview Tab */}
+            {activeTab === "overview" && (
+              <div style={{ display: "grid", gap: 14 }}>
+                <Card><div style={LABEL_STYLE}>Total Mentions — Aggregated Across {results.modelResults.length} Model(s)</div><HorizontalBarChart data={results.aggSovData} /></Card>
+                {results.modelResults.length > 1 && <Card>
+                  <div style={LABEL_STYLE}>Model-by-Model Breakdown</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(" + results.modelResults.length + ", 1fr)", gap: 14 }}>
+                    {results.modelResults.map(m => <div key={m.model}><div style={{ fontSize: 12, fontWeight: 600, color: MODELS[m.model].color, marginBottom: 8 }}>{MODELS[m.model].icon} {MODELS[m.model].name}</div><HorizontalBarChart data={m.rules.sovData} /></div>)}
+                  </div>
+                </Card>}
+                <Card><div style={LABEL_STYLE}>Key Findings</div><div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {results.allFindings.map((f, i) => (
+                    <div key={i} style={{ padding: "14px 16px", borderRadius: 8, background: f.type === "positive" ? "rgba(26,141,95,0.04)" : f.type === "negative" ? "rgba(196,61,61,0.04)" : "rgba(198,125,21,0.04)", border: "1px solid " + (f.type === "positive" ? "rgba(26,141,95,0.12)" : f.type === "negative" ? "rgba(196,61,61,0.12)" : "rgba(198,125,21,0.12)") }}>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+                        <Badge type={f.source}>{f.source === "rule" ? "Rules" : "AI"}</Badge><Badge type={f.type}>{f.type}</Badge>
+                        {f.model && <Badge type={f.model}>{MODELS[f.model]?.name || f.model}</Badge>}
+                        <span style={{ fontSize: 13, fontWeight: 600 }}>{f.title}</span>
+                      </div>
+                      <div style={{ fontSize: 13, color: COLORS.textMuted, lineHeight: 1.6 }}>{f.detail}</div>
+                    </div>
+                  ))}
+                </div></Card>
+                {results.ai.positioning && <Card style={{ borderLeft: "3px solid " + COLORS.primary }}><div style={LABEL_STYLE}>AI Positioning Summary</div><div style={{ fontFamily: serif, fontSize: 15, fontStyle: "italic", lineHeight: 1.7 }}>"{results.ai.positioning}"</div></Card>}
+              </div>
+            )}
+
+            {/* Model Queries Tab */}
+            {activeTab === "queries" && (
+              <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ display: "flex", gap: 6, marginBottom: 4 }}>
+                  <button onClick={() => setViewModel("all")} style={{ padding: "6px 14px", borderRadius: 6, border: "none", fontFamily: fonts, fontSize: 12, cursor: "pointer", background: viewModel === "all" ? COLORS.primaryMuted : "rgba(0,0,0,0.03)", color: viewModel === "all" ? COLORS.primary : COLORS.textMuted, fontWeight: viewModel === "all" ? 600 : 400 }}>All Models</button>
+                  {results.modelResults.map(m => <button key={m.model} onClick={() => setViewModel(m.model)} style={{ padding: "6px 14px", borderRadius: 6, border: "none", fontFamily: fonts, fontSize: 12, cursor: "pointer", background: viewModel === m.model ? MODELS[m.model].color + "15" : "rgba(0,0,0,0.03)", color: viewModel === m.model ? MODELS[m.model].color : COLORS.textMuted, fontWeight: viewModel === m.model ? 600 : 400 }}>{MODELS[m.model].icon} {MODELS[m.model].name}</button>)}
+                </div>
+                {filteredQueries.map((q, i) => (
+                  <Card key={i}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, gap: 10, flexWrap: "wrap" }}>
+                      <div style={{ fontWeight: 600, fontSize: 13, flex: 1, minWidth: 200 }}><span style={{ color: COLORS.textDim, marginRight: 8 }}>Q{(i%5)+1}</span>"{q.query}"</div>
+                      <div style={{ display: "flex", gap: 5 }}>
+                        {q.model && <Badge type={q.model}>{MODELS[q.model]?.name}</Badge>}
+                        {q.hotelRecommended && <Badge type="positive">Recommended</Badge>}
+                        {q.firstMention === config.hotelName.toLowerCase() && <Badge type="positive">1st Listed</Badge>}
+                        {q.mentions[config.hotelName.toLowerCase()] === 0 && <Badge type="negative">Not Mentioned</Badge>}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 13, color: COLORS.textMuted, lineHeight: 1.7, padding: "12px 14px", background: "#FAFAF8", borderRadius: 6, borderLeft: "2px solid " + (q.model ? MODELS[q.model].color : COLORS.textDim), marginBottom: 10 }}>{q.response}</div>
+                    <div style={{ display: "flex", gap: 14, fontSize: 11, flexWrap: "wrap" }}>
+                      {Object.entries(q.mentions).map(([name, count]) => (
+                        <span key={name} style={{ color: count > 0 ? COLORS.text : COLORS.textDim }}>
+                          <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 2, marginRight: 5, background: name === config.hotelName.toLowerCase() ? COLORS.primary : count > 0 ? COLORS.accent : COLORS.textDim, verticalAlign: "middle" }} />{name}: {count}
+                        </span>
+                      ))}
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+
+            {/* Action Plan Tab */}
+            {activeTab === "actions" && (
+              <div style={{ display: "grid", gap: 14 }}>
+                {results.ai.contentGaps?.length > 0 && <Card><div style={LABEL_STYLE}>Content Gaps</div><div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {results.ai.contentGaps.map((gap, i) => <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "12px 14px", borderRadius: 8, background: "rgba(198,125,21,0.04)", border: "1px solid rgba(198,125,21,0.12)" }}><span style={{ color: COLORS.accent, fontSize: 14, flexShrink: 0 }}>{"◇"}</span><span style={{ fontSize: 13, lineHeight: 1.5 }}>{gap}</span></div>)}
+                </div></Card>}
+                <Card><div style={LABEL_STYLE}>Prioritized Recommendations</div><div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {(results.ai.recommendations || []).sort((a,b) => ({high:0,medium:1,low:2}[a.priority]||1) - ({high:0,medium:1,low:2}[b.priority]||1)).map((rec, i) => (
+                    <div key={i} style={{ padding: "16px 18px", borderRadius: 10, background: COLORS.card, border: "1px solid " + COLORS.cardBorder }}>
+                      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}><Badge type={rec.priority}>{rec.priority}</Badge>{rec.category && <Badge type={rec.category}>{rec.category}</Badge>}</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 5, lineHeight: 1.4 }}>{rec.action}</div>
+                      <div style={{ fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>{rec.reasoning}</div>
+                    </div>
+                  ))}
+                </div></Card>
+                {results.ai.competitorInsights?.length > 0 && <Card><div style={LABEL_STYLE}>What Competitors Do Better</div><div style={{ display: "grid", gap: 8 }}>
+                  {results.ai.competitorInsights.map((ci, i) => <div key={i} style={{ padding: "12px 14px", borderRadius: 8, background: "rgba(109,40,217,0.03)", border: "1px solid rgba(109,40,217,0.1)" }}><span style={{ fontWeight: 600, fontSize: 13 }}>{ci.name}: </span><span style={{ fontSize: 13, color: COLORS.textMuted }}>{ci.edge}</span></div>)}
+                </div></Card>}
+              </div>
+            )}
+
+            {/* Decision Log Tab */}
+            {activeTab === "log" && (
+              <div style={{ display: "grid", gap: 14 }}>
+                <Card>
+                  <div style={LABEL_STYLE}>Pipeline Performance</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(" + (results.modelResults.length + 1) + ", 1fr)", gap: 10, marginBottom: 18 }}>
+                    {results.modelResults.map(m => <div key={m.model} style={{ padding: "14px", borderRadius: 8, background: MODELS[m.model].color + "10", textAlign: "center", border: "1px solid " + MODELS[m.model].color + "22" }}><div style={{ fontSize: 22, fontWeight: 700, color: MODELS[m.model].color }}>{m.latency}ms</div><div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>{MODELS[m.model].icon} {MODELS[m.model].name}</div></div>)}
+                    <div style={{ padding: "14px", borderRadius: 8, background: "rgba(109,40,217,0.06)", textAlign: "center", border: "1px solid rgba(109,40,217,0.12)" }}><div style={{ fontSize: 22, fontWeight: 700, color: "#6D28D9" }}>{results.aiLatency}ms</div><div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>AI Analysis ({MODELS[results.analysisModel]?.name})</div></div>
+                  </div>
+                  <div style={{ padding: "14px 16px", borderRadius: 8, background: "#FAFAF8", border: "1px solid " + COLORS.cardBorder, fontSize: 12, color: COLORS.textMuted, lineHeight: 1.8 }}>
+                    <strong style={{ color: COLORS.text }}>Architecture:</strong> {results.modelResults.length} discovery call{results.modelResults.length > 1 ? "s" : ""} ({results.modelResults.map(m => MODELS[m.model].name).join(" + ")}) + 1 cross-model AI analysis ({MODELS[results.analysisModel]?.name}) + {results.modelResults.length} rules engine pass{results.modelResults.length > 1 ? "es" : ""}. Rules engine: &lt;1ms, zero cost.
+                  </div>
+                </Card>
+                <Card><div style={LABEL_STYLE}>Full Decision Audit Trail</div><div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead><tr>{["#","Source","Model","Signal","Finding","Conf."].map(h => <th key={h} style={{ textAlign: "left", padding: "10px", borderBottom: "1px solid " + COLORS.cardBorder, color: COLORS.textMuted, fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                    <tbody>{results.allFindings.map((f, i) => (
+                      <tr key={i} style={{ borderBottom: "1px solid rgba(0,0,0,0.04)" }}>
+                        <td style={{ padding: "10px", color: COLORS.textDim }}>{i+1}</td>
+                        <td style={{ padding: "10px" }}><Badge type={f.source}>{f.source === "rule" ? "Rules" : "AI"}</Badge></td>
+                        <td style={{ padding: "10px" }}>{f.model ? <Badge type={f.model}>{MODELS[f.model]?.name || "—"}</Badge> : "—"}</td>
+                        <td style={{ padding: "10px" }}><Badge type={f.type}>{f.type}</Badge></td>
+                        <td style={{ padding: "10px", maxWidth: 350 }}><div style={{ fontWeight: 500, marginBottom: 2 }}>{f.title}</div><div style={{ color: COLORS.textMuted, lineHeight: 1.5 }}>{f.detail}</div></td>
+                        <td style={{ padding: "10px", color: COLORS.textMuted, whiteSpace: "nowrap" }}>{((f.confidence||0)*100).toFixed(0)}%</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div></Card>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(<App />, document.getElementById("root"));
+</script>
+</body>
+</html>
