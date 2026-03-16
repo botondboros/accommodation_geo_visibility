@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Job Application Tracker — Botond Boros</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0f0f11;
+    --surface: #17171a;
+    --surface2: #1e1e23;
+    --border: #2a2a32;
+    --accent: #c8a96e;
+    --accent2: #7c9e87;
+    --text: #e8e6e0;
+    --muted: #7a7880;
+    --danger: #c46b6b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 300;
+    min-height: 100vh;
+    padding: 40px 24px 80px;
+  }
+  header {
+    max-width: 1100px;
+    margin: 0 auto 40px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 28px;
+  }
+  header h1 {
+    font-family: 'DM Serif Display', serif;
+    font-size: 2rem;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+  }
+  header h1 span { color: var(--accent); font-style: italic; }
+  .stats { display: flex; gap: 28px; }
+  .stat { text-align: right; }
+  .stat-num { font-family: 'DM Serif Display', serif; font-size: 1.8rem; color: var(--accent); line-height: 1; }
+  .stat-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin-top: 4px; }
+
+  .notice {
+    max-width: 1100px;
+    margin: 0 auto 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 20px;
+    font-size: 0.78rem;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+  }
+  .notice strong { color: var(--text); }
+  .reload-btn {
+    background: var(--accent);
+    color: #111;
+    border: none;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.75rem;
+    font-weight: 500;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .reload-btn:hover { opacity: 0.85; }
+
+  .filters {
+    max-width: 1100px;
+    margin: 0 auto 20px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .filter-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .filter-btn:hover, .filter-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #111;
+  }
+
+  .grid {
+    max-width: 1100px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px;
+    transition: border-color 0.2s, transform 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .card:hover { border-color: #3a3a44; transform: translateY(-2px); }
+  .card:hover::before { opacity: 0.6; }
+
+  .card.priority-high { border-left: 3px solid var(--accent); }
+  .card.status-rejected { opacity: 0.5; }
+  .card.status-offer { border-color: #7ec88a44; }
+  .card.status-offer::before { background: #7ec88a; opacity: 1; }
+  .card.status-interview::before { opacity: 1; }
+
+  .card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
+  .company { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent2); margin-bottom: 5px; font-weight: 500; }
+  .title { font-size: 1rem; font-weight: 500; color: var(--text); line-height: 1.3; }
+  .score-badge { font-family: 'DM Serif Display', serif; font-size: 1.3rem; color: var(--accent); line-height: 1; white-space: nowrap; margin-left: 12px; }
+  .score-badge small { font-family: 'DM Sans', sans-serif; font-size: 0.65rem; color: var(--muted); display: block; text-align: right; margin-top: 2px; }
+
+  .expiry-bar {
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    margin: 10px 0 14px;
+    overflow: hidden;
+  }
+  .expiry-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s;
+  }
+  .expiry-label {
+    font-size: 0.68rem;
+    color: var(--muted);
+    margin-top: -10px;
+    margin-bottom: 12px;
+  }
+  .expiry-label.urgent { color: var(--danger); }
+
+  .files { display: flex; gap: 8px; margin: 14px 0; flex-wrap: wrap; }
+  .file-link {
+    font-size: 0.72rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 4px 10px;
+    border-radius: 6px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .file-link:hover { border-color: var(--accent); color: var(--accent); }
+
+  .link-input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.75rem;
+    padding: 5px 9px;
+    border-radius: 6px;
+    outline: none;
+    transition: border-color 0.15s;
+    margin-bottom: 6px;
+  }
+  .link-input:focus { border-color: var(--accent); }
+  .link-input::placeholder { color: var(--muted); }
+
+  .apply-btn {
+    display: inline-block;
+    background: var(--accent);
+    color: #111;
+    font-size: 0.72rem;
+    font-weight: 500;
+    padding: 5px 14px;
+    border-radius: 6px;
+    text-decoration: none;
+    font-family: 'DM Sans', sans-serif;
+    cursor: pointer;
+    border: none;
+    transition: opacity 0.15s;
+    margin-bottom: 4px;
+  }
+  .apply-btn:hover { opacity: 0.85; }
+
+  .status-row { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; flex-shrink: 0; }
+  .status-select {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.78rem;
+    padding: 5px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.15s;
+    flex: 1;
+    margin-right: 10px;
+  }
+  .status-select:focus { border-color: var(--accent); }
+
+  .note-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.72rem;
+    padding: 5px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .note-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .note-area { display: none; margin-top: 10px; }
+  .note-area.open { display: block; }
+  .note-area textarea {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.8rem;
+    font-weight: 300;
+    padding: 8px 10px;
+    border-radius: 6px;
+    resize: vertical;
+    min-height: 64px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .note-area textarea:focus { border-color: var(--accent); }
+
+  .date-row { font-size: 0.7rem; color: var(--muted); margin-top: 8px; display: flex; gap: 12px; }
+
+  .status-not_applied .status-dot { background: #444; }
+  .status-applied .status-dot { background: var(--accent2); }
+  .status-interview .status-dot { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .status-rejected .status-dot { background: var(--danger); }
+  .status-offer .status-dot { background: #7ec88a; box-shadow: 0 0 6px #7ec88a; }
+
+  .empty {
+    max-width: 1100px;
+    margin: 60px auto;
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  .empty h2 { font-family: 'DM Serif Display', serif; font-size: 1.5rem; margin-bottom: 8px; color: var(--text); font-weight: 400; }
+
+  .load-error {
+    max-width: 600px;
+    margin: 60px auto;
+    background: var(--surface);
+    border: 1px solid #c46b6b55;
+    border-radius: 12px;
+    padding: 28px;
+    text-align: center;
+  }
+  .load-error h2 { font-family: 'DM Serif Display', serif; font-size: 1.4rem; color: var(--danger); margin-bottom: 12px; font-weight: 400; }
+  .load-error p { font-size: 0.82rem; color: var(--muted); line-height: 1.7; }
+  .load-error code { background: var(--surface2); padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; color: var(--text); }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Application <span>Tracker</span></h1>
+    <div style="font-size:0.75rem;color:var(--muted);margin-top:6px;">Botond Boros · auto-refreshes every 48h</div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="stat-num" id="stat-total">—</div><div class="stat-label">Active</div></div>
+    <div class="stat"><div class="stat-num" id="stat-applied">—</div><div class="stat-label">Applied</div></div>
+    <div class="stat"><div class="stat-num" id="stat-interview">—</div><div class="stat-label">Interview</div></div>
+    <div class="stat"><div class="stat-num" id="stat-offer">—</div><div class="stat-label">Offer</div></div>
+  </div>
+</header>
+
+<div class="notice">
+  <span id="last-run-label"><strong>Loading job_tracker.json…</strong></span>
+  <button class="reload-btn" onclick="loadTracker()">↻ Reload</button>
+</div>
+
+<div class="filters">
+  <button class="filter-btn active" onclick="setFilter('all',this)">All</button>
+  <button class="filter-btn" onclick="setFilter('not_applied',this)">Not Applied</button>
+  <button class="filter-btn" onclick="setFilter('applied',this)">Applied</button>
+  <button class="filter-btn" onclick="setFilter('interview',this)">Interview</button>
+  <button class="filter-btn" onclick="setFilter('offer',this)">Offer</button>
+  <button class="filter-btn" onclick="setFilter('rejected',this)">Rejected</button>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<script>
+const BASE_CV = 'C:\\Users\\bboro\\Documents\\hr_assistant\\cv_output\\';
+const BASE_CL = 'C:\\Users\\bboro\\Documents\\hr_assistant\\cl_output\\';
+const EXPIRY_DAYS = 7;
+
+const STATUSES = [
+  { value: 'not_applied', label: '⬜ Not Applied' },
+  { value: 'applied',     label: '🟢 Applied'     },
+  { value: 'interview',   label: '⭐ Interview'   },
+  { value: 'offer',       label: '🏆 Offer'       },
+  { value: 'rejected',    label: '❌ Rejected'    },
+];
+
+let allJobs = [];
+let currentFilter = 'all';
+
+// ── Local storage for UI state (status, notes, url, date) ────────────────────
+function loadState(id) {
+  try { return JSON.parse(localStorage.getItem('job_' + id)) || {}; } catch { return {}; }
+}
+function saveState(id, patch) {
+  const s = loadState(id);
+  localStorage.setItem('job_' + id, JSON.stringify({...s, ...patch}));
+}
+
+// ── Load tracker JSON ─────────────────────────────────────────────────────────
+async function loadTracker() {
+  try {
+    const resp = await fetch('job_tracker.json?t=' + Date.now());
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const jobs = await resp.json();
+    allJobs = jobs;
+    document.getElementById('last-run-label').innerHTML =
+      `<strong>job_tracker.json</strong> loaded — ${jobs.length} job(s) · last refresh: ${new Date().toLocaleTimeString()}`;
+    renderAll();
+  } catch (e) {
+    document.getElementById('grid').innerHTML = `
+      <div class="load-error" style="grid-column:1/-1">
+        <h2>Could not load job_tracker.json</h2>
+        <p>
+          Make sure <code>job_tracker.json</code> is in the same folder as this HTML file
+          (<code>C:\\Users\\bboro\\Documents\\hr_assistant\\</code>).<br><br>
+          Run the pipeline once to generate it:<br>
+          <code>python run_pipeline.py</code><br><br>
+          Then reload this page.
+        </p>
+      </div>`;
+    document.getElementById('last-run-label').innerHTML =
+      '<strong style="color:var(--danger)">⚠ job_tracker.json not found</strong>';
+  }
+}
+
+// ── Expiry helpers ────────────────────────────────────────────────────────────
+function daysOld(discovered) {
+  const d = new Date(discovered);
+  const now = new Date();
+  return Math.floor((now - d) / 86400000);
+}
+
+function expiryInfo(job) {
+  const state = loadState(job.id);
+  const status = state.status || job.status || 'not_applied';
+  if (status !== 'not_applied') return null; // no expiry once actioned
+  const age = daysOld(job.discovered);
+  const remaining = EXPIRY_DAYS - age;
+  return { age, remaining, pct: Math.min(100, (age / EXPIRY_DAYS) * 100) };
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
+function setFilter(f, btn) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderAll();
+}
+
+function renderAll() {
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+
+  let counts = { total: 0, applied: 0, interview: 0, offer: 0 };
+  let shown = 0;
+
+  allJobs.forEach(job => {
+    const state = loadState(job.id);
+    const status = state.status || job.status || 'not_applied';
+
+    // Count all (not filtered)
+    counts.total++;
+    if (status === 'applied' || status === 'interview' || status === 'offer') counts.applied++;
+    if (status === 'interview') counts.interview++;
+    if (status === 'offer') counts.offer++;
+
+    if (currentFilter !== 'all' && status !== currentFilter) return;
+
+    grid.appendChild(buildCard(job, state, status));
+    shown++;
+  });
+
+  if (shown === 0) {
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1">
+      <h2>No jobs here</h2>
+      <p>Nothing matches the current filter.</p>
+    </div>`;
+  }
+
+  document.getElementById('stat-total').textContent = counts.total;
+  document.getElementById('stat-applied').textContent = counts.applied;
+  document.getElementById('stat-interview').textContent = counts.interview;
+  document.getElementById('stat-offer').textContent = counts.offer;
+
+  // Update filter button counts
+  document.querySelector('.filter-btn').textContent = `All (${counts.total})`;
+}
+
+function buildCard(job, state, status) {
+  const card = document.createElement('div');
+  card.id = 'card-' + job.id;
+  card.className = `card status-${status} ${job.score >= 60 ? 'priority-high' : ''}`;
+
+  const exp = expiryInfo(job);
+  let expiryHTML = '';
+  if (exp) {
+    const color = exp.remaining <= 2 ? '#c46b6b' : exp.remaining <= 4 ? '#c49a6b' : 'var(--accent2)';
+    const label = exp.remaining > 0
+      ? `Expires in <strong style="color:${color}">${exp.remaining} day${exp.remaining !== 1 ? 's' : ''}</strong>`
+      : `<strong style="color:var(--danger)">Expired — will be removed on next pipeline run</strong>`;
+    expiryHTML = `
+      <div class="expiry-bar"><div class="expiry-fill" style="width:${exp.pct}%;background:${color}"></div></div>
+      <div class="expiry-label ${exp.remaining <= 2 ? 'urgent' : ''}">${label}</div>`;
+  }
+
+  const url = state.url || job.url || '';
+  const cvFile = job.cv_file || '';
+  const clFile = job.cl_file || '';
+
+  const fileButtons = [
+    cvFile ? `<span class="file-link" onclick="copyPath('${BASE_CV}${cvFile}')">📄 CV</span>` : '',
+    clFile ? `<span class="file-link" onclick="copyPath('${BASE_CL}${clFile}')">✉️ Cover Letter</span>` : '',
+    !cvFile && !clFile ? `<span class="file-link" style="opacity:0.4;cursor:default">📄 CV</span><span class="file-link" style="opacity:0.4;cursor:default">✉️ Cover Letter</span>` : '',
+  ].join('');
+
+  card.innerHTML = `
+    <div class="card-top">
+      <div>
+        <div class="company">${job.company}</div>
+        <div class="title">${job.title}</div>
+      </div>
+      <div class="score-badge">${job.score}<small>/ 100</small></div>
+    </div>
+
+    ${expiryHTML}
+
+    <div class="files">${fileButtons}</div>
+
+    <input class="link-input" type="url" placeholder="Paste application URL…"
+      value="${url}" id="url-${job.id}"
+      oninput="onUrlChange('${job.id}', this.value)" />
+    <a class="apply-btn" id="applybtn-${job.id}"
+      href="${url || '#'}" target="_blank"
+      style="${url ? '' : 'opacity:0.35;pointer-events:none'}"
+      >Open Application →</a>
+
+    <div class="status-row">
+      <div style="display:flex;align-items:center;flex:1;margin-right:10px">
+        <span class="status-dot"></span>
+        <select class="status-select" onchange="onStatusChange('${job.id}', this.value)">
+          ${STATUSES.map(s => `<option value="${s.value}" ${status === s.value ? 'selected':''}>${s.label}</option>`).join('')}
+        </select>
+      </div>
+      <button class="note-btn" onclick="toggleNote('${job.id}')">📝 Notes</button>
+    </div>
+
+    <div class="note-area ${state.note ? 'open':''}" id="note-${job.id}">
+      <textarea placeholder="Contact name, follow-up date, notes…"
+        oninput="saveState('${job.id}', {note: this.value})"
+      >${state.note || ''}</textarea>
+    </div>
+
+    <div class="date-row">
+      <span>Discovered: ${job.discovered}</span>
+      ${state.date_applied ? `<span>Applied: ${state.date_applied}</span>` : ''}
+    </div>
+  `;
+  return card;
+}
+
+function onUrlChange(id, val) {
+  saveState(id, { url: val });
+  const btn = document.getElementById('applybtn-' + id);
+  btn.href = val || '#';
+  btn.style.opacity = val ? '1' : '0.35';
+  btn.style.pointerEvents = val ? 'auto' : 'none';
+}
+
+function onStatusChange(id, val) {
+  const patch = { status: val };
+  if ((val === 'applied' || val === 'interview') && !loadState(id).date_applied) {
+    patch.date_applied = new Date().toLocaleDateString('en-GB');
+  }
+  saveState(id, patch);
+  // Re-render card
+  const job = allJobs.find(j => j.id === id);
+  if (!job) return;
+  const state = loadState(id);
+  const old = document.getElementById('card-' + id);
+  const fresh = buildCard(job, state, val);
+  old.replaceWith(fresh);
+  if (currentFilter !== 'all' && val !== currentFilter) {
+    fresh.style.display = 'none';
+  }
+  updateStats();
+}
+
+function updateStats() {
+  let counts = { total: 0, applied: 0, interview: 0, offer: 0 };
+  allJobs.forEach(j => {
+    const status = loadState(j.id).status || j.status || 'not_applied';
+    counts.total++;
+    if (['applied','interview','offer'].includes(status)) counts.applied++;
+    if (status === 'interview') counts.interview++;
+    if (status === 'offer') counts.offer++;
+  });
+  document.getElementById('stat-total').textContent = counts.total;
+  document.getElementById('stat-applied').textContent = counts.applied;
+  document.getElementById('stat-interview').textContent = counts.interview;
+  document.getElementById('stat-offer').textContent = counts.offer;
+}
+
+function toggleNote(id) {
+  document.getElementById('note-' + id).classList.toggle('open');
+}
+
+function copyPath(path) {
+  navigator.clipboard.writeText(path).then(() => {
+    alert('Path copied:\n' + path + '\n\nPaste in Explorer address bar to open.');
+  }).catch(() => {
+    prompt('Copy this path:', path);
+  });
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+loadTracker();
+</script>
+</body>
+</html>
