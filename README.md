@@ -75,16 +75,6 @@ The tool uses a **hybrid rules + AI architecture** — a deliberate design choic
           │  Rules vs AI source,    │
           │  confidence, cost       │
           └─────────────────────────┘
-```
-
-### Why hybrid?
-
-| Layer | What it handles | Why not AI? |
-|-------|----------------|-------------|
-| **Rules Engine** | Mention counting, share of voice, first-mention position, recommendation detection | Deterministic, instant, free, 100% reproducible, auditable |
-| **AI Layer** | Sentiment interpretation, content gap identification, strategic recommendations | Requires contextual understanding that regex/rules can't provide |
-
-The **Decision Log** tab exposes this split transparently — every finding shows its source (Rules vs AI), confidence score, and cost. This isn't just a product feature; it demonstrates architectural judgment about when AI is the right tool and when it isn't.
 
 ---
 
@@ -93,7 +83,7 @@ The **Decision Log** tab exposes this split transparently — every finding show
 - **Live LLM analysis** — Real API calls simulate actual traveler queries (not mocked data)
 - **Visibility score** — Composite score (0–100) based on mention frequency, first-position rate, and AI sentiment
 - **Share of voice** — Your property's mention count vs competitors as a percentage
-- **Smart name matching** — 4-tier matching engine: exact → accent-insensitive → brand-word → strong-word. Handles "Kempinski Budapest" matching "Kempinski Hotel Corvinus" and "Börzsöny Vendégház" matching "Borzsony Vendeghaz"
+- **Smart name matching** — 4-tier matching engine: exact → accent-insensitive → brand-word → strong-word.
 - **Content gap detection** — AI identifies specific topics where your property has no presence in AI responses
 - **Competitor benchmarking** — See what competitors do better in AI visibility and why
 - **Action plan** — Prioritized recommendations tagged by category (content/technical/strategic)
