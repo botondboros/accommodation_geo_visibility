@@ -138,35 +138,3 @@ This is a portfolio demonstration. A production version would need:
 | No authentication | User accounts, property management |
 | BYOK required | Hosted backend with managed API keys |
 
----
-
-## Screenshots
-
-### Setup
-![Setup](screenshots/setup.png)
-
-### Results Overview
-![Overview](screenshots/overview.png)
-
-### Guest Queries
-![Queries](screenshots/queries.png)
-
-### Action Plan
-![Actions](screenshots/actions.png)
-
-### Decision Log
-![Log](screenshots/decision-log.png)
-
----
-
-## About
-
-Built as a portfolio project demonstrating system design, hybrid AI architecture, and production thinking for senior technical roles.
-
-The core insight: **AI isn't always the answer.** The rules engine handles everything deterministic (counting, matching, comparing) at zero cost and 100% reliability. AI is reserved for what it's actually good at — interpretation and strategy. The Decision Log makes this architectural choice fully transparent and auditable.
-
----
-
-## License
-
-MIT
